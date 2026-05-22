@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 import json
 from zoneinfo import ZoneInfo
 
+# ==================== 钉钉签名与发送 ====================
 def generate_signed_url(access_token, secret):
     timestamp = str(round(time.time() * 1000))
     string_to_sign = f"{timestamp}\n{secret}"
@@ -35,65 +36,67 @@ def send_dingtalk_message(webhook_url, content):
     except Exception as e:
         print(f"❌ 网络错误: {e}")
 
+# ==================== 地区配置 ====================
+# 提醒窗口（秒）—— 1小时 = 3600秒
+REMIND_WINDOW_SECONDS = 3600
+
+# 各国家/地区配置： (显示名称, 时区ID, 高峰时段列表)
+# 高峰时段格式：(小时, 分钟, 描述)
 regions = [
-    ("德国", "Europe/Berlin"),
-    ("美国东部", "America/New_York"),
-    ("美国西部", "America/Los_Angeles"),
-    ("英国", "Europe/London"),
-    ("法国", "Europe/Paris"),
-    ("澳大利亚", "Australia/Sydney"),
-    ("奥地利", "Europe/Vienna"),
-    ("瑞士", "Europe/Zurich"),
-    ("希腊", "Europe/Athens"),
-    ("匈牙利", "Europe/Budapest"),
-    ("波兰", "Europe/Warsaw"),
-    ("捷克", "Europe/Prague"),
-    ("比利时", "Europe/Brussels"),
-    ("荷兰", "Europe/Amsterdam"),
-    ("西班牙", "Europe/Madrid"),
-    ("墨西哥", "America/Mexico_City"),
-    ("加拿大", "America/Toronto"),
+    # 北美
+    ("美国东部", "America/New_York", [(7,0,"早高峰"), (12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("美国西部", "America/Los_Angeles", [(7,0,"早高峰"), (12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("加拿大", "America/Toronto", [(7,0,"早高峰"), (12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("墨西哥", "America/Mexico_City", [(9,0,"早高峰"), (14,0,"午高峰"), (20,0,"晚高峰")]),
+    # 英国及西欧核心市场
+    ("英国", "Europe/London", [(12,0,"午高峰"), (18,0,"晚高峰")]),                          # 无显著早高峰，午12-15/晚18-22
+    ("德国", "Europe/Berlin", [(12,0,"午高峰"), (19,0,"晚高峰")]),                          # 晚19-23为主力，午12-14次高峰
+    ("法国", "Europe/Paris", [(12,0,"午高峰"), (19,0,"晚高峰")]),                            # 晚19-23黄金期，午12-14次高峰
+    ("奥地利", "Europe/Vienna", [(12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("瑞士", "Europe/Zurich", [(12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("希腊", "Europe/Athens", [(12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("匈牙利", "Europe/Budapest", [(12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("波兰", "Europe/Warsaw", [(12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("捷克", "Europe/Prague", [(12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("比利时", "Europe/Brussels", [(12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("荷兰", "Europe/Amsterdam", [(12,0,"午高峰"), (19,0,"晚高峰")]),
+    ("西班牙", "Europe/Madrid", [(14,0,"午高峰"), (21,0,"晚高峰")]),                         # 午高峰晚2小时，晚高峰也相应延迟
+    # 大洋洲
+    ("澳大利亚", "Australia/Sydney", [(7,0,"早高峰"), (12,0,"午高峰"), (18,0,"晚高峰")]),    # 早7-11/午12-14/晚18-22
 ]
 
-peak_hours = {
-    "德国": 20, "美国东部": 21, "美国西部": 21, "英国": 20, "法国": 20,
-    "澳大利亚": 19, "奥地利": 20, "瑞士": 20, "希腊": 21, "匈牙利": 20,
-    "波兰": 20, "捷克": 20, "比利时": 20, "荷兰": 20, "西班牙": 21,
-    "墨西哥": 20, "加拿大": 21,
-}
-
 def get_reminder_message():
-    """返回需要提醒的地区信息，如果没有则不返回任何内容（返回None）"""
+    """返回需要提醒的地区信息，无提醒则返回None"""
     beijing_now = datetime.now(ZoneInfo("Asia/Shanghai"))
     beijing_str = beijing_now.strftime("%Y-%m-%d %H:%M:%S")
     
     remind_list = []
-    for name, tzname in regions:
+    for name, tzname, peaks in regions:
         local_now = datetime.now(ZoneInfo(tzname))
-        peak_hour = peak_hours[name]
-        peak_today = local_now.replace(hour=peak_hour, minute=0, second=0, microsecond=0)
-        if local_now >= peak_today:
-            peak_today += timedelta(days=1)
-        diff = peak_today - local_now
-        # 提醒窗口：距离高峰 <= 1小时 且 还未到达高峰
-        if 0 < diff.total_seconds() <= 3600:
-            local_str = local_now.strftime("%Y-%m-%d %H:%M:%S")
-            remind_list.append((name, local_str, peak_hour))
+        local_str = local_now.strftime("%Y-%m-%d %H:%M:%S")
+        
+        for hour, minute, desc in peaks:
+            peak_dt = local_now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if local_now >= peak_dt:
+                peak_dt += timedelta(days=1)
+            delta_seconds = (peak_dt - local_now).total_seconds()
+            if 0 < delta_seconds <= REMIND_WINDOW_SECONDS:
+                remind_list.append((name, local_str, desc, f"{hour:02d}:{minute:02d}"))
+                break  # 一个地区只提醒一次（距离最近的高峰）
     
     if not remind_list:
-        return None  # 没有需要提醒的地区，不发消息
+        return None
     
-    # 构建消息
     lines = [
         f"## 📡 流量高峰提醒（即将到来）",
         f"",
         f"### 📅 中国时间：{beijing_str}",
         f"---",
-        f"| 🌍 地区 | 🕐 当地时间 | ⏰ 高峰时间 |",
-        f"|--------|-----------|-----------|"
+        f"| 🌍 地区 | 🕐 当地时间 | ⏰ 即将到来的高峰 |",
+        f"|--------|-----------|----------------|"
     ]
-    for name, local_str, peak_hour in remind_list:
-        lines.append(f"| {name} | {local_str} | {peak_hour:02d}:00 |")
+    for name, local_str, desc, peak_time in remind_list:
+        lines.append(f"| {name} | {local_str} | {desc} {peak_time} |")
     return "\n".join(lines)
 
 def main():
@@ -104,7 +107,7 @@ def main():
         return
     content = get_reminder_message()
     if content is None:
-        print("ℹ️ 当前没有国家进入高峰前1小时窗口，不发送消息")
+        print("ℹ️ 当前没有地区进入高峰前1小时窗口，不发送消息")
         return
     url = generate_signed_url(token, secret)
     send_dingtalk_message(url, content)
