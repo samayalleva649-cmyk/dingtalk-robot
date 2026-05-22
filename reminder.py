@@ -62,41 +62,38 @@ peak_hours = {
     "墨西哥": 20, "加拿大": 21,
 }
 
-def get_message():
+def get_reminder_message():
+    """返回需要提醒的地区信息，如果没有则不返回任何内容（返回None）"""
     beijing_now = datetime.now(ZoneInfo("Asia/Shanghai"))
     beijing_str = beijing_now.strftime("%Y-%m-%d %H:%M:%S")
-    lines = [
-        f"## 📡 欧美地区流量高峰提醒",
-        f"",
-        f"### 📅 中国时间（北京）：**{beijing_str}**",
-        f"---",
-        f"| 🌍 地区 | 🕐 当地时间 | ⏰ 高峰时间 | ⏱️ 剩余提醒 |",
-        f"|--------|-----------|-----------|-----------|"
-    ]
-    reminders = []
+    
+    remind_list = []
     for name, tzname in regions:
         local_now = datetime.now(ZoneInfo(tzname))
-        local_str = local_now.strftime("%Y-%m-%d %H:%M:%S")
         peak_hour = peak_hours[name]
         peak_today = local_now.replace(hour=peak_hour, minute=0, second=0, microsecond=0)
         if local_now >= peak_today:
             peak_today += timedelta(days=1)
         diff = peak_today - local_now
-        hours_left = diff.seconds // 3600
-        minutes_left = (diff.seconds % 3600) // 60
-        if diff.days == 0 and hours_left < 1:
-            remain_msg = f"🟢 **{minutes_left}分钟后** 高峰即将到来"
-            reminders.append(name)
-        elif diff.days == 0 and hours_left < 24:
-            remain_msg = f"🔔 **{hours_left}h{minutes_left}m**"
-            reminders.append(name)
-        else:
-            remain_msg = f"{hours_left}h{minutes_left}m"
-        lines.append(f"| {name} | {local_str} | {peak_hour:02d}:00 | {remain_msg} |")
-    lines.append("")
-    lines.append("### 💡 说明")
-    lines.append(f"- 已进入提醒窗口：{', '.join(reminders) if reminders else '无'}")
-    lines.append("- 提醒窗口为高峰前1小时，请提前准备")
+        # 提醒窗口：距离高峰 <= 1小时 且 还未到达高峰
+        if 0 < diff.total_seconds() <= 3600:
+            local_str = local_now.strftime("%Y-%m-%d %H:%M:%S")
+            remind_list.append((name, local_str, peak_hour))
+    
+    if not remind_list:
+        return None  # 没有需要提醒的地区，不发消息
+    
+    # 构建消息
+    lines = [
+        f"## 📡 流量高峰提醒（即将到来）",
+        f"",
+        f"### 📅 中国时间：{beijing_str}",
+        f"---",
+        f"| 🌍 地区 | 🕐 当地时间 | ⏰ 高峰时间 |",
+        f"|--------|-----------|-----------|"
+    ]
+    for name, local_str, peak_hour in remind_list:
+        lines.append(f"| {name} | {local_str} | {peak_hour:02d}:00 |")
     return "\n".join(lines)
 
 def main():
@@ -105,8 +102,11 @@ def main():
     if not token or not secret:
         print("❌ 错误：未设置环境变量 DINGTALK_ACCESS_TOKEN 或 DINGTALK_SECRET")
         return
+    content = get_reminder_message()
+    if content is None:
+        print("ℹ️ 当前没有国家进入高峰前1小时窗口，不发送消息")
+        return
     url = generate_signed_url(token, secret)
-    content = get_message()
     send_dingtalk_message(url, content)
 
 if __name__ == "__main__":
